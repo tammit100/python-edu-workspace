@@ -1,0 +1,15 @@
+# סינון תיקיות התקנה כבדות
+node_modules/
+dist/
+.vite/
+
+# 🔥 סינון קריטי: הגנה על מפתחות ה-API והקונפיגורציות שלכם
+.env
+.env.local
+.env.development.local
+.env.production.local
+
+# קבצים זמניים של פייתון והרצות
+__pycache__/
+*.pyc
+temp_code.py
