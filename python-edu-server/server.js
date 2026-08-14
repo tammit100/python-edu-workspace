@@ -1,10 +1,13 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import db from "./database.js";
+import { supabase } from "./supabase.js";
 
 const app = express();
 app.use(cors());
@@ -63,110 +66,111 @@ app.post('/api/chat', (req, res) => {
     });
 });
 
-// ✅ קודם כל: שליפת רשימת כל השיעורים שקיימים ב-DB (עבור ה-Dropdown)
-app.get("/api/lessons", (req, res) => {
-  db.all("SELECT id, subject FROM lessons ORDER BY id ASC", [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(rows);
-  });
+// 📖 API מעודכן: שליפת רשימת כל השיעורים שקיימים ב-Supabase עבור ה-Dropdown
+app.get("/api/lessons", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("lessons")
+      .select("id, subject")
+      .order("id", { ascending: true });
+
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error("❌ שגיאה בשליפת רשימת שיעורים מ-Supabase:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 📖 API חדש: שליפת שיעור ותרגיל יחד עם כל שלבי העזרה שלו מה-DB
-app.get("/api/lessons/:id", (req, res) => {
+// 📖 API מעודכן ומאובטח: שליפת שיעור ותרגיל ספציפי יחד עם הרמזים שלו מהענן
+app.get("/api/lessons/:id", async (req, res) => {
   const lessonId = req.params.id;
 
-  // 1. שליפת פרטי השיעור הכלליים
-  db.get("SELECT * FROM lessons WHERE id = ?", [lessonId], (err, lesson) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!lesson) return res.status(404).json({ error: "השיעור לא נמצא" });
+  try {
+    // א'. שליפת פרטי השיעור הכלליים (ללא .single() כדי למנוע קריסה אם ריק)
+    const { data: lessons, error: lessonError } = await supabase
+      .from("lessons")
+      .select("*")
+      .eq("id", lessonId);
 
-    // 2. שליפת כל שלבי העזרה המקושרים לשיעור זה ומיושרים לפי מספר השלב
-    db.all("SELECT * FROM lesson_hints WHERE lesson_id = ? ORDER BY step_number ASC", [lessonId], (err, hints) => {
-      if (err) return res.status(500).json({ error: err.message });
+    if (lessonError) throw lessonError;
+    
+    // בדיקה האם המערך ריק (השיעור לא קיים עדיין ב-Supabase)
+    if (!lessons || lessons.length === 0) {
+      return res.status(404).json({ error: "השיעור לא נמצא במסד הנתונים בענן" });
+    }
 
-      // החזרת אובייקט אחד מאוחד המכיל את השיעור ואת מערך הרמזים הדינמי שלו!
-      res.json({
-        ...lesson,
-        hints: hints
-      });
+    const lesson = lessons[0]; // תופס את האיבר הראשון והיחיד מהמערך
+
+    // ב'. שליפת כל שלבי העזרה המקושרים לשיעור זה ומיושרים לפי מספר השלב
+    const { data: hints, error: hintsError } = await supabase
+      .from("lesson_hints")
+      .select("*")
+      .eq("lesson_id", lessonId)
+      .order("step_number", { ascending: true });
+
+    if (hintsError) throw hintsError;
+
+    // ג'. החזרת אובייקט אחד מאוחד התואם לחלוטין ל-Interface של ה-Frontend
+    res.json({
+      ...lesson,
+      hints: hints || []
     });
-  });
+  } catch (err) {
+    console.error(`❌ שגיאה בשליפת שיעור ${lessonId} מ-Supabase:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ⚙️ API חדש: פאנל מנהל - יצירת שיעור חדש ומערך הרמזים שלו בטרנזקציה אחת
-app.post("/api/admin/lessons", (req, res) => {
+
+// ⚙️ API מעודכן: פאנל מנהל - יצירת שיעור חדש ומערך הרמזים שלו ישירות ב-Supabase
+app.post("/api/admin/lessons", async (req, res) => {
   const { subject, presentation_url, topic_material, exercise_description, solution_code, hints } = req.body;
 
-  //console.log(`subject ${subject}\ntopic_material ${topic_material}\nexercise_description ${exercise_description}\nsolution_code ${solution_code}`);
-  // 1. שימוש ב-serialize כדי להבטיח ביצוע סדרתי ותקין של שאילתות ה-SQLite
-  db.serialize(() => {
-    // פתיחת טרנזקציה (מונע מצב ששיעור יישמר ללא הרמזים שלו במקרה של תקלה)
-    db.run("BEGIN TRANSACTION");
+  try {
+    // 1. הכנסת השיעור הראשי לטבלת lessons ושליפת השורה שנוצרה
+    const { data: newLesson, error: lessonError } = await supabase
+      .from("lessons")
+      .insert([{ 
+        subject, 
+        presentation_url, 
+        topic_material, 
+        exercise_description, 
+        solution_code 
+      }])
+      .select()
+      .single(); // מבטיח קבלת אובייקט בודד עם ה-ID החדש
 
-    const lessonSql = `
-      INSERT INTO lessons (subject, presentation_url, topic_material, exercise_description, solution_code)
-      VALUES (?, ?, ?, ?, ?)
-    `;
+    if (lessonError) throw lessonError;
 
-    // 2. הכנסת השיעור הראשי לטבלת 
-    db.run(lessonSql, [subject, presentation_url, topic_material, exercise_description, solution_code], function (err) {
-      if (err) {
-        console.error("❌ שגיאה בהכנסת שיעור ל-DB:", err.message);
-        db.run("ROLLBACK");
-        return res.status(500).json({ error: "Failed to create lesson" });
-      }
+    const lessonId = newLesson.id; // שליפת ה-ID האוטומטי שנוצר בענן
 
-      const lessonId = this.lastID; // שליפת ה-ID הייחודי של השיעור שנוצר זה עתה
+    // 2. אם המנהל הזין רמזים, נכניס את כולם בבת אחת (Bulk Insert)
+    if (hints && hints.length > 0) {
+      // מיפוי הרמזים והוספת ה-lesson_id שקיבלנו מהשלב הקודם
+      const hintsToInsert = hints.map(hint => ({
+        lesson_id: lessonId,
+        step_number: hint.step_number,
+        title: hint.title,
+        content: hint.content
+      }));
 
-      // אם מנהל המערכת לא הזין רמזים בכלל, נסגור את הטרנזקציה ונסיים
-      if (!hints || hints.length === 0) {
-        db.run("COMMIT");
-        return res.status(201).json({ message: "Lesson created successfully", lessonId });
-      }
+      const { error: hintsError } = await supabase
+        .from("lesson_hints")
+        .insert(hintsToInsert);
 
-            // 3. הכנה מראש של שאילתת הכנסת הרמזים לביצוע מהיר (Prepared Statement)
-      const hintSql = `
-        INSERT INTO lesson_hints (lesson_id, step_number, title, content)
-        VALUES (?, ?, ?, ?)
-      `;
-      const insertHint = db.prepare(hintSql);
+      if (hintsError) throw hintsError;
+    }
 
-      let hasError = false;
+    console.log(`🎉 שיעור חדש (ID: ${lessonId}) יחד עם הרמזים שלו נשמרו ב-Supabase!`);
+    res.status(201).json({ message: "Lesson and hints created successfully in cloud", lessonId });
 
-      // 4. ריצה על כל הרמזים שהגיעו מה-Frontend והזרקתם ל-DB
-      hints.forEach((hint) => {
-        insertHint.run([lessonId, hint.step_number, hint.title, hint.content], (hintErr) => {
-          if (hintErr) {
-            console.error("❌ שגיאה בהכנסת רמז ל-DB:", hintErr.message);
-            hasError = true;
-          }
-        });
-      });
-
-      // סגירת אובייקט ה-Statement המשוריין
-      insertHint.finalize((finalizeErr) => {
-        // אם משהו השתבש במהלך הלולאה או הפינאליזציה - נבצע ביטול מלא
-        if (hasError || finalizeErr) {
-          db.run("ROLLBACK");
-          return res.status(500).json({ error: "Failed to insert lesson hints" });
-        }
-
-        // אם הכל עבר בשלום, ננעל את השינויים בדיסק הקשיח (Save)
-        db.run("COMMIT", (commitErr) => {
-          if (commitErr) {
-            db.run("ROLLBACK");
-            return res.status(500).json({ error: "Failed to commit transaction" });
-          }
-          
-          console.log(`🎉 שיעור חדש (ID: ${lessonId}) יחד עם ${hints.length} רמזים נשמרו ב-DB!`);
-          res.status(201).json({ message: "Lesson and hints created successfully", lessonId });
-        });
-      });
-    });
-  });
+  } catch (err) {
+    console.error("❌ שגיאה בשמירת שיעור ב-Supabase:", err.message);
+    res.status(500).json({ error: "Failed to create lesson in database" });
+  }
 });
+
 
 // 🤖 API חדש: סוכן ה-AI למרצים - מחולל תרגילים ורמזים פדגוגיים אוטומטית
 app.post('/api/admin/generate-lesson', (req, res) => {

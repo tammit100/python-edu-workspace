@@ -232,7 +232,20 @@ export default function App() {
                 onClick={() => setShowTopicPopup(true)}
                 style={{ cursor: "pointer", fontSize: "0.85rem", color: "#4fc1ff", fontWeight: "bold", textDecoration: "underline" }}
               >
-                ⓘ מה זה {currentLesson?.subject.split(':')[1]?.trim() || "זה"}?
+                {/* כפתור ה-ⓘ המשודרג הכולל הגנה מפני קריסה אם השיעור חסר */}
+                <span 
+                  onClick={() => currentLesson && setShowTopicPopup(true)}
+                  style={{ 
+                    cursor: currentLesson ? "pointer" : "not-allowed", 
+                    fontSize: "0.85rem", 
+                    color: currentLesson ? "#4fc1ff" : "#666", 
+                    fontWeight: "bold", 
+                    textDecoration: currentLesson ? "underline" : "none" 
+                  }}
+                >
+                  ⓘ מה זה {currentLesson?.subject?.includes(':') ? currentLesson.subject.split(':')[1]?.trim() : (currentLesson?.subject || "הנושא")}?
+                </span>
+
               </span>
             </div>
 
@@ -252,45 +265,67 @@ export default function App() {
 
         <button onClick={() => setShowModal(true)} style={{ color: "#4fc1ff", cursor: "pointer", background: "none", border: "none", textAlign: "right", marginBottom: "15px", padding: 0 }}>🖥️ מצגת שיעור</button>
           
-          {/* 📖 תיבת חומר לימוד ותיאוריה */}
+                    {/* 📖 תיבת חומר לימוד ותיאוריה - גרסה מוגנת מקריסות */}
           <div style={{ background: "#1e1e1e", padding: "14px", borderRadius: "8px", marginBottom: "12px", borderRight: "4px solid #4fc1ff", boxShadow: "0 2px 4px rgba(0,0,0,0.2)" }}>
             <h5 style={{ margin: "0 0 8px 0", color: "#4fc1ff", fontSize: "0.95rem", fontWeight: "bold" }}>📖 חומר לימוד:</h5>
-            {/* 🔥 שימוש בפונקציה החכמה שלכם ששוברת שורות אוטומטית אחרי נקודות ומספרים */}
-            {currentLesson.topic_material ? (
+            {/* 🔥 הוספת סימן שאלה להגנה: currentLesson?.topic_material */}
+            {currentLesson?.topic_material ? (
               renderTextWithSmartBreaks(currentLesson.topic_material)
             ) : (
               <div style={{ color: "#aaa", fontSize: "0.85rem" }}>אין חומר לימוד זמין לשיעור זה.</div>
             )}
           </div>
 
-          {/* 📝 תיבת התרגיל והמשימה */}
+          {/* 🎯 תיבת התרגיל והמשימה - גרסה מוגנת מקריסות */}
           <div style={{ background: "#1e1e1e", padding: "14px", borderRadius: "8px", marginBottom: "15px", borderRight: "4px solid #4caf50", boxShadow: "0 2px 4px rgba(0,0,0,0.2)" }}>
             <h5 style={{ margin: "0 0 8px 0", color: "#4caf50", fontSize: "0.95rem", fontWeight: "bold" }}>🎯 משימה לביצוע:</h5>
-            
-            {/* 🔥 שימוש ב-whiteSpace: "pre-wrap" כדי שכל ההערות (#) והקוד ירדו שורה בצורה מושלמת בדיוק כפי שה-AI כתב אותם */}
             <div style={{ 
               margin: 0, 
               fontSize: "0.9rem", 
               lineHeight: "1.6", 
               whiteSpace: "pre-wrap", 
-              fontFamily: currentLesson.exercise_description.includes("#") ? "monospace" : "sans-serif",
-              color: currentLesson.exercise_description.includes("#") ? "#4fc1ff" : "#ffffff",
-              background: currentLesson.exercise_description.includes("#") ? "#151515" : "transparent",
-              padding: currentLesson.exercise_description.includes("#") ? "10px" : "0",
-              borderRadius: "4px",
-              // direction: currentLesson.exercise_description.includes("#") ? "ltr" : "rtl",
-              direction: "ltr",
-              // textAlign: currentLesson.exercise_description.includes("#") ? "left" : "right"
-              textAlign: "left"
+              fontFamily: "monospace",
+              color: "#4fc1ff",
+              background: "#151515",
+              padding: "12px",
+              borderRadius: "6px",
+              direction: (currentLesson?.exercise_description?.includes("#") || currentLesson?.exercise_description?.includes("=")) ? "ltr" : "rtl",
+              textAlign: (currentLesson?.exercise_description?.includes("#") || currentLesson?.exercise_description?.includes("=")) ? "left" : "right"
             }}>
-              {currentLesson.exercise_description ? (
-                renderTextWithSmartBreaks(currentLesson.exercise_description)
-              ) : (
-                <div style={{ color: "#aaa", fontSize: "0.85rem" }}>אין חומר לימוד זמין לשיעור זה.</div>
-              )}
-              
+              {/* 🔥 הוספת אופרטור הגנה כדי למנוע קריסה אם המשימה ריקה */}
+              {currentLesson?.exercise_description || "אנא בחר או ג'נרט יחידת לימוד בפאנל המנהל."}
             </div>
           </div>
+
+                    {/* 🎯 תיבת התרגיל והמשימה - גרסה מוגנת מקריסות ומיושרת לשמאל לקוד פייתון */}
+          <div style={{ background: "#1e1e1e", padding: "14px", borderRadius: "8px", marginBottom: "15px", borderRight: "4px solid #4caf50", boxShadow: "0 2px 4px rgba(0,0,0,0.2)" }}>
+            <h5 style={{ margin: "0 0 8px 0", color: "#4caf50", fontSize: "0.95rem", fontWeight: "bold" }}>🎯 משימה לביצוע:</h5>
+            
+            <div style={{ 
+              margin: 0, 
+              fontSize: "0.9rem", 
+              lineHeight: "1.6", 
+              whiteSpace: "pre-wrap", 
+              // 🔥 שימוש ב-?. לפקודתincludes מוגנת
+              fontFamily: currentLesson?.exercise_description?.includes("#") ? "monospace" : "sans-serif",
+              color: currentLesson?.exercise_description?.includes("#") ? "#4fc1ff" : "#ffffff",
+              background: currentLesson?.exercise_description?.includes("#") ? "#151515" : "transparent",
+              padding: currentLesson?.exercise_description?.includes("#") ? "10px" : "0",
+              borderRadius: "4px",
+              direction: (currentLesson?.exercise_description?.includes("#") || currentLesson?.exercise_description?.includes("=")) ? "ltr" : "rtl",
+              textAlign: (currentLesson?.exercise_description?.includes("#") || currentLesson?.exercise_description?.includes("=")) ? "left" : "right"
+
+            }}>
+              {currentLesson?.exercise_description ? (
+                renderTextWithSmartBreaks(currentLesson.exercise_description)
+              ) : (
+                <div style={{ color: "#aaa", fontSize: "0.85rem", direction: "rtl", textAlign: "right" }}>
+                  אנא בחר או ג'נרט יחידת לימוד בפאנל המנהל.
+                </div>
+              )}
+            </div>
+          </div>
+
 
           {/* 🛠️ אזור כפתורי רמזי ה-AI המשודרגים */}
           <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "15px" }}>

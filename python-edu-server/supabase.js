@@ -1,20 +1,22 @@
-import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+// טוען את המשתנים מיד עם פענוח הקובץ הזה בזיכרון
+dotenv.config(); 
 
-dotenv.config();
+import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.SUPABASE_URL;
-// 🔥 שימוש ב-Service Role Key (ולא ב-Anon Key) ב-Backend
-// מפתח זה עוקף את חוקי ה-RLS ומאפשר לשרת לנהל את ה-DB בבטחה
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// בדיקת בטיחות אקטיבית
 if (!supabaseUrl || !supabaseServiceKey) {
   console.error("❌ שגיאה: חסרים משתני סביבה עבור Supabase בקובץ .env");
+  console.error("נמצא URL:", supabaseUrl ? "תקין" : "חסר");
+  console.error("נמצא Key:", supabaseServiceKey ? "תקין" : "חסר");
 }
 
 export const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   auth: {
-    persistSession: false, // מכיוון שמדובר בשרת API, אין צורך לשמור סשן מקומי
+    persistSession: false,
     autoRefreshToken: false
   }
 });
