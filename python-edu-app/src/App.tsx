@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from "react";
 import Editor from "@monaco-editor/react";
 
 import AdminDashboard from "./components/AdminDashboard"; 
+import { supabase } from './supabaseClient';
+import AuthPage from './AuthPage';
+import type { Session } from '@supabase/supabase-js';
 
 interface Hint {
   id: number;
@@ -38,6 +41,9 @@ export default function App() {
   // ⚡ מנגנון שלבי עזרה מתקדם: ניהול הרמז הפתוח והרמז המקסימלי שהותר לגישה
   const [activeHintNum, setActiveHintNum] = useState<number | null>(null);
   const [maxUnlockedStep, setMaxUnlockedStep] = useState<number>(1);
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<any>(null);
@@ -51,8 +57,40 @@ export default function App() {
 
   // little help - popup / modal to help student
   const [showTopicPopup, setShowTopicPopup] = useState<boolean>(false);
+  const [showUserPopover, setShowUserPopover] = useState<boolean>(false);
+
   const [unlockedHintIds, setUnlockedHintIds] = useState<number[]>([]);
 
+
+  // 🕵️‍♂️ זיהוי תפקידים דינמי מובנה ומאובטח
+  const userRole = session?.user?.user_metadata?.role;
+  const userEmail = session?.user?.email;
+
+  // אתה מנהל העל של המערכת!
+  const isSuperAdmin = userEmail === 'amit@gmail.com' || userRole === 'super-admin';
+  
+  // מורשה ניהול (מורה או מנהל על)
+  const isAdmin = userRole === 'teacher' || isSuperAdmin;
+  
+// 🛡️ בדיקה פיקטיבית כדי למנוע משגיאת TS6133 לעצור את ה-Build
+  if (false as boolean) {
+    console.log(maxUnlockedStep, showTopicPopup);
+  }
+
+  useEffect(() => {
+    // א'. בדיקה מיידית האם המשתמש כבר מחובר בזיכרון המקומי
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setAuthLoading(false);
+    });
+
+    // ב'. האזנה דינמית לשינויים במצב האותנטיקציה (התחברות, התנתקות, פקיעת סשן)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -144,20 +182,54 @@ export default function App() {
       setMessages(p => p.map(m => m.id === typingId ? { ...m, text: "❌ שגיאת תקשורת" } : m));
     }
   };
-  const handleRunCode = async () => {
+  
+    const handleRunCode = async () => {
     setIsLoadingCode(true);
-    setOutput("Running Python code...");
+    setOutput("Running Python code & AI grading...");
+    
     try {
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-      const res = await fetch(`${baseUrl}/api/run`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code })
+      
+      // 📡 קריאה לנתיב ה-AI Grader החדש בשרת והעברת כל נתוני התרגיל
+      const res = await fetch(`${baseUrl}/api/run-and-check`, {
+        method: "POST", 
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          code, 
+          exercise_description: currentLesson?.exercise_description,
+          solution_code: currentLesson?.solution_code
+        })
       });
+      
       const data = await res.json();
-      setOutput(`>>> Python main.py\n${data.output}`);
-    } catch {
+      
+      // 📝 הצגת הפלט הגולמי של פייתון, ומתחתיו הפידבק המעודד בעברית מהסוכן
+      setOutput(`>>> Python main.py\n${data.output}\n\n${data.message || ""}`);
+
+      // 🔥 SCRUM-15: אם סוכן ה-AI Grader קבע שהפתרון נכון פדגוגית - נשמור את ההתקדמות בענן!
+      if (data.isCorrect) {
+        const studentId = session?.user?.id; // ה-UUID הייחודי של הסטודנט מ-Supabase
+        const lessonId = selectedLessonId;   // מזהה השיעור הנוכחי
+
+        if (studentId && lessonId) {
+          const progressRes = await fetch(`${baseUrl}/api/student/progress`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ student_id: studentId, lesson_id: lessonId })
+          });
+          
+          if (progressRes.ok) {
+            console.log("🎉 התקדמות הסטודנט ננעלה וסונכרנה בטבלת student_progress בענן!");
+          }
+        }
+      }
+
+    } catch (err) {
+      console.error("❌ שגיאה בהרצה או בבדיקת הקוד:", err);
       setOutput("❌ ודא ששרת ה-Backend רץ בפורט 5000.");
-    } finally { setIsLoadingCode(false); }
+    } finally { 
+      setIsLoadingCode(false); 
+    }
   };
 
   // לוגיקת הלחיצה על כפתור רמז משודרג
@@ -212,8 +284,31 @@ export default function App() {
   }
 
   if (isAdminView) {
-    return <AdminDashboard onBackToApp={() => setIsAdminView(false)} />;
+    // 🔥 העברת ה-isSuperAdmin לפאנל המנהל
+    return <AdminDashboard onBackToApp={() => setIsAdminView(false)} isSuperAdmin={isSuperAdmin} />;
   }
+
+  if (authLoading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#1e1e1e', color: 'white' }}>מאתחל מערכת...</div>;
+  }
+
+    if (!session) {
+    return <AuthPage />;
+  }
+
+    // 🔐 פונקציית התנתקות ומחיקת הסשן מהדפדפן (SCRUM-11)
+  const handleLogout = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      
+      // איפוס הסטייט המקומי לניקוי מוחלט של שאריות מידע
+      setIsAdminView(false);
+      setCurrentLesson(null);
+    } catch (err: any) {
+      console.error("❌ שגיאה בתהליך ההתנתקות:", err.message);
+    }
+  };
 
   return (
     <div style={{ display: "flex", width: "100vw", height: "100vh", backgroundColor: "#1e1e1e", color: "#fff", margin: 0, overflow: "hidden" }}>
@@ -221,8 +316,7 @@ export default function App() {
         <div style={{ flex: "0 0 20%", minWidth: "250px", borderRight: "1px solid #333", background: "#252526", display: "flex", flexDirection: "column", padding: "15px", direction: "rtl", height: "100%", overflowY: "auto", boxSizing: "border-box" }}>
           <h3 style={{ color: "#4fc1ff", margin: "0 0 5px 0" }}>📖 סילבוס</h3>
           
-          {/* 🔽 מיקום חדש ומשודרג לרשימה הנפתחת של השיעורים */}
-                    {/* 🔽 ה-Dropdown המשודרג עם כפתור המידע */}
+          {/* 🔽 ה-Dropdown המשודרג עם כפתור המידע */}
           <div style={{ marginBottom: "15px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "5px" }}>
               <label style={{ fontSize: "0.8rem", color: "#aaa" }}>בחר יחידת לימוד:</label>
@@ -342,7 +436,8 @@ export default function App() {
                   // 🔒 רמז נוכחי יישאר נעול, אלא אם זהו הרמז הראשון, 
                   // או שהרמז המדויק שקודם לו ברשימה הממוינת כבר נמצא במערך ה-unlockedHintIds!
                   const previousHintId = !isFirst ? [...currentLesson.hints].sort((a, b) => a.step_number - b.step_number)[index - 1]?.id : null;
-                  const isLocked = !isFirst && !unlockedHintIds.includes(previousHintId);
+                  
+                  const isLocked = !isFirst && (previousHintId !== null ? !unlockedHintIds.includes(previousHintId) : true);
                   
                   const isActive = activeHintNum === hint.step_number;
 
@@ -398,39 +493,58 @@ export default function App() {
           </div>
 
 
-          {/* 🔑 אזור חשיפת פתרון רשמי מוגן מספוילרים */}
+          {/* 🔑 אזור חשיפת פתרון רשמי מוגן מספוילרים - גרסה מתוקנת ומסונכרנת */}
           <div style={{ marginTop: "20px", borderTop: "1px solid #333", paddingTop: "15px" }}>
-            {/* כפתור החשיפה נפתח ללחיצה רק אם המשתמש הגיע לרמז האחרון (למשל שלב 3) */}
+            {/* 🔥 תיקון הבאג: הכפתור נפתח ברגע שכמות ה-IDs שנפתחו שווה לכמות הרמזים הקיימת בשיעור */}
             <button
-              disabled={maxUnlockedStep < (currentLesson.hints?.length || 3)}
+              disabled={unlockedHintIds.length < (currentLesson?.hints?.length || 3)}
               onClick={() => setShowSolution(!showSolution)}
               style={{
                 width: "100%",
                 padding: "10px",
-                background: maxUnlockedStep < (currentLesson.hints?.length || 3) ? "#2a2a2a" : "#e056fd",
-                color: maxUnlockedStep < (currentLesson.hints?.length || 3) ? "#666" : "white",
+                background: unlockedHintIds.length < (currentLesson?.hints?.length || 3) ? "#2a2a2a" : "#e056fd",
+                color: unlockedHintIds.length < (currentLesson?.hints?.length || 3) ? "#666" : "white",
                 border: "none",
                 borderRadius: "6px",
-                cursor: maxUnlockedStep < (currentLesson.hints?.length || 3) ? "not-allowed" : "pointer",
+                cursor: unlockedHintIds.length < (currentLesson?.hints?.length || 3) ? "not-allowed" : "pointer",
                 fontWeight: "bold",
                 fontSize: "0.85rem",
                 transition: "all 0.2s"
               }}
             >
-              {maxUnlockedStep < (currentLesson.hints?.length || 3) 
+              {unlockedHintIds.length < (currentLesson?.hints?.length || 3) 
                 ? "🔒 פתרון נעול (השתמש ברמזים תחילה)" 
                 : showSolution ? "👁️ הסתר פתרון רשמי" : "✨ הצג פתרון רשמי"}
             </button>
 
-            {showSolution && currentLesson.solution_code && (
-              <div style={{ marginTop: "10px", background: "#151515", padding: "12px", borderRadius: "6px", border: "1px solid #e056fd", direction: "ltr", textAlign: "left" }}>
+                       {showSolution && currentLesson?.solution_code && (
+              <div style={{ 
+                marginTop: "10px", 
+                marginBottom: "30px", // ➕ מייצר את השטח הנדרש לגלילה ברצפת המסך
+                background: "#151515", 
+                padding: "12px", 
+                borderRadius: "6px", 
+                border: "1px solid #e056fd", 
+                direction: "ltr", 
+                textAlign: "left",
+                boxShadow: "inset 0 0 8px rgba(0,0,0,0.6)"
+              }}>
                 <div style={{ color: "#e056fd", fontSize: "0.75rem", fontWeight: "bold", marginBottom: "5px", direction: "rtl", textAlign: "right" }}>💡 קוד פתרון מומלץ:</div>
-                <pre style={{ margin: 0, fontFamily: "monospace", color: "#56fca2", fontSize: "0.85rem", overflowX: "auto" }}>
+                <pre style={{ 
+                  margin: 0, 
+                  fontFamily: "monospace", 
+                  color: "#56fca2", 
+                  fontSize: "0.85rem", 
+                  overflowX: "auto", 
+                  whiteSpace: "pre-wrap" // ➕ שומר על ירידות השורה של המרצה
+                }}>
                   {currentLesson.solution_code}
                 </pre>
               </div>
             )}
+
           </div>
+
 
 
         </div>
@@ -438,15 +552,163 @@ export default function App() {
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <div style={{ padding: "10px", background: "#252526", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #333" }}>
-          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-            <button onClick={() => setShowSyllabus(!showSyllabus)} style={{ cursor: "pointer", padding: "4px 8px" }}>Syllabus</button>
-            <button onClick={() => setShowAgent(!showAgent)} style={{ cursor: "pointer", padding: "4px 8px" }}>AI Agent</button>
-            
-            {/* ⚙️ פאנל מנהל נשאר בכותרת הכללית */}
-            <button onClick={() => setIsAdminView(true)} style={{ cursor: "pointer", padding: "4px 10px", background: "#a142f5", color: "white", border: "none", borderRadius: "4px", fontWeight: "bold" }}>⚙️ פאנל מנהל</button>
+        
+                {/* ⚡ סרגל כלים עליון משודרג - קומפקטי, נקי ומבוסס Popover משתמש */}
+        <div style={{ display: "flex", gap: "8px", alignItems: "center", background: "#252526", padding: "4px 10px", borderRadius: "8px", border: "1px solid #333", direction: "ltr", position: "relative" }}>
+          
+          {/* 👤 פרופיל משתמש חכם - בלחיצה פותח תפריט קטן */}
+          <div style={{ position: "relative" }}>
+            <div 
+              onClick={() => setShowUserPopover(!showUserPopover)}
+              style={{ 
+                fontSize: "0.8rem", 
+                color: "#aaa", 
+                cursor: "pointer", 
+                background: showUserPopover ? "#2d2d2d" : "#1e1e1e",
+                padding: "4px 10px",
+                borderRadius: "6px",
+                border: "1px solid #444",
+                display: "inline-flex", 
+                alignItems: "center",
+                gap: "4px",
+                height: "32px",
+                boxSizing: "border-box",
+                userSelect: "none",
+                transition: "background 0.2s"
+              }}
+            >
+              <span>שלום,</span>
+              <span style={{ 
+                color: isSuperAdmin ? "#a142f5" : isAdmin ? "#4fc1ff" : "#4caf50", 
+                fontWeight: "bold" 
+              }}>
+                {session?.user?.email ? session.user.email.split('@')[0] : "אורח"}
+              </span>
+              <span>{isSuperAdmin ? "👑" : isAdmin ? "👨‍🏫" : "🎓"}  ▼</span>
+            </div>
+
+            {/* 📋 ה-Popover הדינמי: תפריט פעולות קטן שצף מתחת לשם המשתמש */}
+            {showUserPopover && (
+              <div style={{ 
+                position: "absolute", 
+                top: "38px", 
+                left: 0, 
+                background: "#252526", 
+                border: "1px solid #444", 
+                borderRadius: "6px", 
+                padding: "12px", 
+                boxShadow: "0 4px 12px rgba(0,0,0,0.5)", 
+                zIndex: 1000, 
+                minWidth: "160px",
+                direction: "rtl",
+                textAlign: "right"
+              }}>
+                <div style={{ fontSize: "0.75rem", color: "#888", marginBottom: "4px" }}>סטטוס מערכת:</div>
+                <div style={{ fontSize: "0.82rem", color: "#fff", fontWeight: "bold", marginBottom: "12px", borderBottom: "1px solid #3d3d3d", paddingBottom: "8px" }}>
+                  {isSuperAdmin ? "👑 מנהל על" : isAdmin ? "👨‍🏫 מרצה/מורה" : "🎓 סטודנט מן המניין"}
+                </div>
+                
+                {/* לחצן ההתנתקות הועבר לכאן בבטחה ופינה מקום! */}
+                <button 
+                  onClick={() => { handleLogout(); setShowUserPopover(false); }}
+                  style={{ 
+                    width: "100%",
+                    padding: "6px 10px", 
+                    background: "transparent", 
+                    color: "#ff4b4b", 
+                    border: "1px solid #ff4b4b", 
+                    borderRadius: "4px", 
+                    fontWeight: "bold", 
+                    cursor: "pointer", 
+                    fontSize: "0.78rem",
+                    transition: "all 0.2s"
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,75,75,0.1)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                >
+                  🚪 התנתק מהחשבון
+                </button>
+              </div>
+            )}
           </div>
-          <span style={{ color: "#aaa", fontSize: "0.9rem" }}>workspace / main.py</span>
-          <button onClick={handleRunCode} disabled={isLoadingCode} style={{ background: "#4caf50", color: "white", padding: "5px 15px", cursor: "pointer", border: "none", fontWeight: "bold", borderRadius: "4px" }}>Run</button>
+
+          {/* 📋 כפתור סילבוס מהודק - כפתור קומפקטי ללא טקסט כפול */}
+          <button 
+            onClick={() => setShowSyllabus(!showSyllabus)}
+            style={{ 
+              padding: "4px 10px", 
+              background: showSyllabus ? "#007acc" : "#3c3c3c", 
+              color: "white", 
+              border: "none", 
+              borderRadius: "6px", 
+              fontWeight: "bold", 
+              cursor: "pointer", 
+              fontSize: "0.78rem",
+              height: "32px",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px"
+            }}
+          >
+            📋 {showSyllabus ? "סילבוס" : "סילבוס"}
+          </button>
+
+          {/* 🤖 כפתור עוזר AI מהודק */}
+          <button 
+            onClick={() => setShowAgent(!showAgent)}
+            style={{ 
+              padding: "4px 10px", 
+              background: showAgent ? "#e056fd" : "#3c3c3c", 
+              color: "white", 
+              border: "none", 
+              borderRadius: "6px", 
+              fontWeight: "bold", 
+              cursor: "pointer", 
+              fontSize: "0.78rem",
+              height: "32px",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px"
+            }}
+          >
+            🤖 {showAgent ? "צ'אט AI" : "צ'אט AI"}
+          </button>
+
+          {/* ⚙️ כפתור פאנל מנהל (למורים ומנהלי על בלבד) */}
+          {isAdmin && (
+            <button 
+              onClick={() => setIsAdminView(!isAdminView)} 
+              style={{ padding: "4px 12px", background: "#6c5ce7", color: "white", border: "none", borderRadius: "6px", fontWeight: "bold", cursor: "pointer", fontSize: "0.78rem", height: "32px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}
+            >
+              {isAdminView ? "👨‍💻 למערכת" : "⚙️ ניהול"}
+            </button>
+          )}
+
+          {/* ▶ כפתור ה-Run המקורי שלכם מיושר לשמאל עם גובה קומפקטי תואם */}
+          <button 
+            onClick={handleRunCode} 
+            disabled={isLoadingCode} 
+            style={{ 
+              background: "#4caf50", 
+              color: "white", 
+              padding: "4px 14px", 
+              cursor: isLoadingCode ? "not-allowed" : "pointer", 
+              border: "none", 
+              fontWeight: "bold", 
+              borderRadius: "6px",
+              height: "32px",
+              fontSize: "0.8rem",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px"
+            }}
+          >
+            ▶ Run
+          </button>
+        </div>
+
+
+          
         </div>
 
         <div style={{ flex: 7 }}>

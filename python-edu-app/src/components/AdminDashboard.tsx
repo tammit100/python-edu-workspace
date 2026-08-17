@@ -6,7 +6,7 @@ interface AdminHint {
   content: string;
 }
 
-export default function AdminDashboard({ onBackToApp }: { onBackToApp: () => void }) {
+export default function AdminDashboard({ onBackToApp, isSuperAdmin }: { onBackToApp: () => void; isSuperAdmin: boolean }) {
   // סטייט לשיעור החדש
   const [topicMaterial, setTopicMaterial] = useState("");
   const [subject, setSubject] = useState("");
@@ -23,6 +23,9 @@ export default function AdminDashboard({ onBackToApp }: { onBackToApp: () => voi
 
   // ➕ סטייט חדש לחיווי טעינה בזמן שה-AI מייצר את השיעור
   const [isGenerating, setIsGenerating] = useState(false);
+
+  // למנהל העל בלבד:
+  const [teacherEmail, setTeacherEmail] = useState('');
 
   // ➕ פונקציה חדשה שקוראת ל-AI וממלאת את הטופס אוטומטית
   const handleAiGenerate = async () => {
@@ -101,7 +104,28 @@ export default function AdminDashboard({ onBackToApp }: { onBackToApp: () => voi
     // הסרת הרמז מהרשימה כדי שיוכל להתווסף מחדש אחרי עריכה
     setHints(hints.filter((_, i) => i !== index));
   };
-
+  
+  const promoteToTeacher = async () => {
+    if (!teacherEmail) return alert("אנא הזן כתובת אימייל תקינה");
+    
+    try {
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+      const res = await fetch(`${baseUrl}/api/admin/set-teacher`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: teacherEmail })
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) throw new Error(data.error || "פעולת המינוי נכשלה");
+      
+      alert(data.message);
+      setTeacherEmail(''); // ניקוי השדה
+    } catch (error: any) {
+      alert(`❌ שגיאה: ${error.message}`);
+    }
+  };
 
   // פונקציה לשליחת כל התוכן לשרת ה-Backend
   const handleSaveLesson = async () => {
@@ -140,8 +164,32 @@ export default function AdminDashboard({ onBackToApp }: { onBackToApp: () => voi
       setStatusMessage("❌ שגיאת תקשורת עם השרת");
     }
   };
+
   return (
     <div style={{ width: "100vw", height: "100vh", backgroundColor: "#1e1e1e", color: "#fff", padding: "30px", boxSizing: "border-box", overflowY: "auto", direction: "rtl", textAlign: "right" }}>
+        {/* 👑 פאנל מנהל על: יוצג רק לך (amit@gmail.com) ישירות בתוך דשבורד המורה */}
+      {isSuperAdmin && (
+        <div style={{ background: '#2d2d2d', padding: '20px', borderRadius: '12px', marginBottom: '25px', border: '1px solid #a142f5', boxShadow: "0 4px 10px rgba(161, 66, 245, 0.2)" }}>
+          <h3 style={{ color: '#a142f5', margin: '0 0 10px 0', fontWeight: "bold" }}>👑 פאנל מנהל על: מינוי מורה חדש במערכת</h3>
+          <p style={{ color: "#aaa", fontSize: "0.85rem", margin: "0 0 15px 0" }}>הזן כתובת אימייל של משתמש רשום כדי להעניק לו גישה מלאה לפאנל המורה וה-AI.</p>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <input 
+              type="email" 
+              value={teacherEmail} 
+              onChange={(e) => setTeacherEmail(e.target.value)} 
+              placeholder="example-teacher@gmail.com" 
+              style={{ flex: 1, padding: '10px', background: '#1e1e1e', color: 'white', border: '1px solid #555', borderRadius: '6px', direction: 'ltr', textAlign: 'left' }} 
+            />
+            <button 
+              onClick={promoteToTeacher} 
+              style={{ background: '#a142f5', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', transition: "background 0.2s" }}
+            >
+              מנה כמורה 🌟
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid #333", paddingBottom: "15px", marginBottom: "20px" }}>
         <h2 style={{ color: "#4fc1ff", margin: 0 }}>⚙️ פאנל מנהל מערכת - הוספת תכני לימוד</h2>
         <button onClick={onBackToApp} style={{ background: "#007acc", color: "#fff", border: "none", padding: "10px 20px", borderRadius: "5px", cursor: "pointer", fontWeight: "bold" }}>🔙 חזרה לסביבת הלימוד</button>

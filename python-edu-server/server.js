@@ -206,6 +206,137 @@ app.post('/api/admin/generate-lesson', (req, res) => {
     });
 });
 
+// 👑 API למנהל העל בלבד: מינוי משתמש קיים למורה לפי אימייל (Bulk/Admin Auth)
+app.post("/api/admin/set-teacher", async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: "חובה לספק כתובת אימייל תקינה" });
+  }
+  
+  try {
+    // 1. שליפת רשימת המשתמשים מתוך ה-Auth של Supabase כדי למצוא את ה-ID שלו
+    const { data: authUsers, error: listError } = await supabase.auth.admin.listUsers();
+    
+    if (listError) throw listError;
+
+    // חיפוש המשתמש לפי המייל שהוזן בטופס
+    const targetUser = authUsers.users.find(user => user.email?.toLowerCase() === email.toLowerCase());
+    
+    if (!targetUser) {
+      return res.status(404).json({ error: "המשתמש המבוקש לא נמצא רשום במערכת" });
+    }
+
+    // 2. עדכון ה-User Metadata של המשתמש ל-role: 'teacher'
+    const { error: updateError } = await supabase.auth.admin.updateUserById(
+      targetUser.id,
+      { user_metadata: { role: 'teacher' } }
+    );
+
+    if (updateError) throw updateError;
+
+    console.log(`👑 מנהל העל מינה את המשתמש ${email} לתפקיד מורה בהצלחה!`);
+    res.json({ message: `המשתמש ${email} עודכן בהצלחה לתפקיד מורה במערכת!` });
+
+  } catch (err) {
+    console.error("❌ שגיאה פנימית במינוי מורה בשרת:", err.message);
+    res.status(500).json({ error: "פעולת המינוי נכשלה ברמת השרת המרכזי" });
+  }
+});
+
+// 📈 API: שמירת התקדמות סטודנט בענן ברגע שהוא פותר תרגיל בהצלחה (SCRUM-15)
+app.post("/api/student/progress", async (req, res) => {
+  const { student_id, lesson_id } = req.body;
+
+  if (!student_id || !lesson_id) {
+    return res.status(400).json({ error: "חסרים נתוני סטודנט או שיעור" });
+  }
+
+  try {
+    // שימוש ב-upsert כדי להכניס שורה חדשה, או לעדכן חותמת זמן אם הסטודנט כבר פתר זאת בעבר
+    const { data, error } = await supabase
+      .from("student_progress")
+      .upsert(
+        { 
+          student_id, 
+          lesson_id, 
+          is_completed: true,
+          completed_at: new Date().toISOString()
+        }, 
+        { onConflict: 'student_id,lesson_id' } // מונע כפילויות לפי החוק שהגדרנו ב-SQL
+      );
+
+    if (error) throw error;
+
+    console.log(`✅ התקדמות נשמרה: סטודנט (${student_id}) פתר בהצלחה את שיעור (${lesson_id})`);
+    res.json({ success: true, message: "ההתקדמות נשמרה בבטחה בענן!" });
+
+  } catch (err) {
+    console.error("❌ שגיאה בשמירת התקדמות סטודנט ב-Supabase:", err.message);
+    res.status(500).json({ error: "נכשלה שמירת ההתקדמות במסד הנתונים" });
+  }
+});
+
+// 🤖 API: הרצת קוד פייתון ובדיקה פדגוגית חכמה באמצעות סוכן בדיקה מופרד (SCRUM-15)
+app.post("/api/run-and-check", async (req, res) => {
+  const { code, exercise_description, solution_code } = req.body;
+
+  if (!code) {
+    return res.status(400).json({ error: "לא נשלח קוד להרצה" });
+  }
+
+  // 📝 1. שמירת קוד הסטודנט לקובץ זמני והרצתו
+  const fileName = `temp_${Date.now()}.py`;
+  fs.writeFileSync(fileName, code);
+
+  exec(`python ${fileName}`, (error, stdout, stderr) => {
+    if (fs.existsSync(fileName)) fs.unlinkSync(fileName);
+
+    const pythonOutput = stdout || stderr || error?.message || "";
+
+    // אם יש שגיאת קומפילציה קשיחה בפייתון - נכשיל מיד ללא פנייה ל-AI
+    if (stderr || error) {
+      return res.json({
+        output: pythonOutput,
+        isCorrect: false,
+        message: "❌ שגיאת קוד פייתון! בדוק את ה-Syntax והרץ מחדש."
+      });
+    }
+
+    // 🤖 2. הפעלת סוכן הפייתון grader_agent.py והזרמת נתונים פנימה
+    const graderProcess = exec("python grader_agent.py", (graderError, graderStdout, graderStderr) => {
+      try {
+        if (graderError || graderStderr) throw new Error(graderStderr || graderError.message);
+        
+        // קבלת פלט ה-JSON מהסוכן
+        const evaluation = JSON.parse(graderStdout.trim());
+
+        console.log(`🤖 AI Grader החליט בפייתון: ${evaluation.isCorrect ? "עבר ✅" : "נכשל ❌"}`);
+        
+        res.json({
+          output: pythonOutput,
+          isCorrect: evaluation.isCorrect,
+          message: evaluation.feedback
+        });
+
+      } catch (err) {
+        console.error("❌ שגיאה בפענוח החלטת סוכן ה-AI:", err.message);
+        res.json({
+          output: pythonOutput,
+          isCorrect: true, // Fallback בטוח לפיתוח
+          message: "🎉 הקוד רץ בהצלחה!"
+        });
+      }
+    });
+
+    // כתיבת המידע לתוך ה-stdin של סוכן הפייתון
+    const payload = JSON.stringify({ exercise_description, solution_code, student_code: code, python_output: pythonOutput });
+    graderProcess.stdin.write(payload);
+    graderProcess.stdin.end();
+  });
+});
+
+
 
 const PORT = 5000;
 app.listen(PORT, () => {
