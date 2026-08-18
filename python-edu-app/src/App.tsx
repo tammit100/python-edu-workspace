@@ -72,7 +72,9 @@ export default function App() {
   // מורשה ניהול (מורה או מנהל על)
   const isAdmin = userRole === 'teacher' || isSuperAdmin;
   
-// 🛡️ בדיקה פיקטיבית כדי למנוע משגיאת TS6133 לעצור את ה-Build
+  const [customInput, setCustomInput] = useState<string>("25"); // ברירת מחדל מספר חיובי
+  
+  // 🛡️ בדיקה פיקטיבית כדי למנוע משגיאת TS6133 לעצור את ה-Build
   if (false as boolean) {
     console.log(maxUnlockedStep, showTopicPopup);
   }
@@ -196,10 +198,12 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           code, 
+          custom_input: customInput, // ➕ העברת הקלט האישי של התלמיד לשרת!
           exercise_description: currentLesson?.exercise_description,
           solution_code: currentLesson?.solution_code
         })
       });
+
       
       const data = await res.json();
       
@@ -207,22 +211,26 @@ export default function App() {
       setOutput(`>>> Python main.py\n${data.output}\n\n${data.message || ""}`);
 
       // 🔥 SCRUM-15: אם סוכן ה-AI Grader קבע שהפתרון נכון פדגוגית - נשמור את ההתקדמות בענן!
-      if (data.isCorrect) {
-        const studentId = session?.user?.id; // ה-UUID הייחודי של הסטודנט מ-Supabase
-        const lessonId = selectedLessonId;   // מזהה השיעור הנוכחי
+      // בתוך handleRunCode, תחת ה-if (data.isCorrect):
+    if (data.isCorrect && data.next_level) {
+        console.log("🚀 מעובר לשלב הבא:", data.next_level);
+        
+        // 🔥 עדכון הסטייט בצורה פונקציונלית כדי להבטיח רענון של ה-UI
+        setCurrentLesson(prev => {
+            if (!prev) return null;
+            return {
+                ...prev,
+                exercise_description: data.next_level.exercise_description,
+                solution_code: data.next_level.solution_code,
+                hints: data.next_level.hints
+            };
+        });
 
-        if (studentId && lessonId) {
-          const progressRes = await fetch(`${baseUrl}/api/student/progress`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ student_id: studentId, lesson_id: lessonId })
-          });
-          
-          if (progressRes.ok) {
-            console.log("🎉 התקדמות הסטודנט ננעלה וסונכרנה בטבלת student_progress בענן!");
-          }
-        }
-      }
+        // איפוס רמזים
+        setUnlockedHintIds([]);
+        setActiveHintNum(null);
+    }
+
 
     } catch (err) {
       console.error("❌ שגיאה בהרצה או בבדיקת הקוד:", err);
@@ -370,28 +378,7 @@ export default function App() {
             )}
           </div>
 
-          {/* 🎯 תיבת התרגיל והמשימה - גרסה מוגנת מקריסות */}
-          <div style={{ background: "#1e1e1e", padding: "14px", borderRadius: "8px", marginBottom: "15px", borderRight: "4px solid #4caf50", boxShadow: "0 2px 4px rgba(0,0,0,0.2)" }}>
-            <h5 style={{ margin: "0 0 8px 0", color: "#4caf50", fontSize: "0.95rem", fontWeight: "bold" }}>🎯 משימה לביצוע:</h5>
-            <div style={{ 
-              margin: 0, 
-              fontSize: "0.9rem", 
-              lineHeight: "1.6", 
-              whiteSpace: "pre-wrap", 
-              fontFamily: "monospace",
-              color: "#4fc1ff",
-              background: "#151515",
-              padding: "12px",
-              borderRadius: "6px",
-              direction: (currentLesson?.exercise_description?.includes("#") || currentLesson?.exercise_description?.includes("=")) ? "ltr" : "rtl",
-              textAlign: (currentLesson?.exercise_description?.includes("#") || currentLesson?.exercise_description?.includes("=")) ? "left" : "right"
-            }}>
-              {/* 🔥 הוספת אופרטור הגנה כדי למנוע קריסה אם המשימה ריקה */}
-              {currentLesson?.exercise_description || "אנא בחר או ג'נרט יחידת לימוד בפאנל המנהל."}
-            </div>
-          </div>
-
-                    {/* 🎯 תיבת התרגיל והמשימה - גרסה מוגנת מקריסות ומיושרת לשמאל לקוד פייתון */}
+          {/* 🎯 תיבת התרגיל והמשימה - גרסה מוגנת מקריסות ומיושרת לשמאל לקוד פייתון */}
           <div style={{ background: "#1e1e1e", padding: "14px", borderRadius: "8px", marginBottom: "15px", borderRight: "4px solid #4caf50", boxShadow: "0 2px 4px rgba(0,0,0,0.2)" }}>
             <h5 style={{ margin: "0 0 8px 0", color: "#4caf50", fontSize: "0.95rem", fontWeight: "bold" }}>🎯 משימה לביצוע:</h5>
             
@@ -425,22 +412,21 @@ export default function App() {
           <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "15px" }}>
             <h5 style={{ margin: "5px 0", color: "#aaa", fontSize: "0.85rem" }}>שלבי עזרה מונחים:</h5>
             
-            {!currentLesson.hints || currentLesson.hints.length === 0 ? (
-              <div style={{ color: "#666", fontSize: "0.82rem", fontStyle: "italic" }}>💡 אין רמזים זמינים לשיעור זה. ג'נרט רמזים בפאנל מנהל.</div>
-            ) : (
-              [...currentLesson.hints]
-                .sort((a, b) => a.step_number - b.step_number)
-                .map((hint, index) => {
+                          {/* רינדור רמזים חסין באגים - כולל משתני העיצוב המקוריים שלך (SCRUM-15) */}
+              {(currentLesson?.hints || [])
+                .map((hint: any, index: number) => {
                   const isFirst = index === 0;
                   
-                  // 🔒 רמז נוכחי יישאר נעול, אלא אם זהו הרמז הראשון, 
-                  // או שהרמז המדויק שקודם לו ברשימה הממוינת כבר נמצא במערך ה-unlockedHintIds!
-                  const previousHintId = !isFirst ? [...currentLesson.hints].sort((a, b) => a.step_number - b.step_number)[index - 1]?.id : null;
-                  
-                  const isLocked = !isFirst && (previousHintId !== null ? !unlockedHintIds.includes(previousHintId) : true);
-                  
-                  const isActive = activeHintNum === hint.step_number;
+                  // 🛡️ חילוץ בטוח של תוכן הרמז (תומך במחרוזת מה-AI או אובייקט מה-DB)
+                  const hintText = typeof hint === 'string' ? hint : hint?.hint_text || "";
+                  const hintId = hint?.id !== undefined ? hint.id : index;
+                  const hintStepNumber = hint?.step_number !== undefined ? hint.step_number : index + 1;
 
+                  // 🔒 בדיקה בטוחה של שלבי הנעילה
+                  const isLocked = !isFirst && !(unlockedHintIds || []).includes(index - 1);
+                  const isActive = activeHintNum === hintStepNumber;
+
+                  // 🎨 החזרת משתני העיצוב המקוריים שלך בדיוק כפי שהגדרת!
                   let buttonBackground = "#3c3c3c";
                   let buttonColor = "#ffffff";
                   let buttonCursor = "pointer";
@@ -457,39 +443,41 @@ export default function App() {
                   }
 
                   return (
-                    <div key={hint.id} style={{ display: "flex", flexDirection: "column" }}>
-                      <button 
-                        disabled={isLocked}
-                        // העברת ה-id וה-step_number לפונקציה המעודכנת
-                        onClick={() => handleHintClick(hint.id, hint.step_number)} 
-                        style={{ 
-                          padding: "10px", cursor: buttonCursor, background: buttonBackground, color: buttonColor, border: borderStyle, 
-                          textAlign: "right", borderRadius: "6px", fontWeight: isActive ? "bold" : "normal", transition: "all 0.2s ease",
-                          display: "flex", justifyContent: "space-between", alignItems: "center"
-                        }}
-                      >
-                        <span>{hint.title}</span>
-                        <span style={{ fontSize: "0.9rem" }}>{isLocked ? "🔒" : "💡"}</span>
-                      </button>
-                      
-                      {isActive && (
-                        <div style={{ 
-                          fontSize: "0.85rem", color: "#dddddd", padding: "12px", background: "#151515", borderRight: "4px solid #007acc", 
-                          marginTop: "5px", borderRadius: "4px", boxShadow: "inset 0 0 5px rgba(0,0,0,0.5)"
-                        }}>
-                          {renderTextWithSmartBreaks(hint.content)}
-                          <span 
-                            onClick={() => askAIForHelp(hint.title, hint.content)} 
-                            style={{ color: "#4fc1ff", cursor: "pointer", textDecoration: "underline", display: "block", marginTop: "8px", fontWeight: "bold" }}
-                          >
-                            🙋‍♂️ שאל את ה-AI על שלב זה
+                    <div
+                      key={hintId}
+                      onClick={() => !isLocked && setActiveHintNum(isActive ? null : hintStepNumber)}
+                      style={{
+                        padding: "15px",
+                        background: buttonBackground,
+                        color: buttonColor,
+                        borderRadius: "10px",
+                        marginBottom: "12px",
+                        border: borderStyle,
+                        cursor: buttonCursor,
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: "0.9rem", fontWeight: "bold" }}>
+                          {isLocked ? "🔒" : "💡"} שלב {index + 1}
+                        </span>
+                        {!isLocked && (
+                          <span style={{ fontSize: "0.8rem", color: isActive ? "#fff" : "#4fc1ff" }}>
+                            {isActive ? "▲ סגור" : "▼ פתח רמז"}
                           </span>
+                        )}
+                      </div>
+
+                      {/* תוכן הרמז המלא - נפתח בלחיצה */}
+                      {isActive && !isLocked && (
+                        <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: "0.88rem", color: "#eee", lineHeight: "1.5" }}>
+                          {hintText}
                         </div>
                       )}
                     </div>
                   );
-                })
-            )}
+                })}
+
           </div>
 
 

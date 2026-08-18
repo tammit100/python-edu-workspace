@@ -279,23 +279,46 @@ app.post("/api/student/progress", async (req, res) => {
 
 // 🤖 API: הרצת קוד פייתון ובדיקה פדגוגית חכמה באמצעות סוכן בדיקה מופרד (SCRUM-15)
 app.post("/api/run-and-check", async (req, res) => {
-  const { code, exercise_description, solution_code } = req.body;
+  // ➕ חילוץ מפורש של custom_input מתוך גוף הבקשה של הדפדפן
+  const { code, custom_input, exercise_description, solution_code } = req.body;
+  console.log("\n📥 [1/4] בקשת ריצה חדשה הגיעה לשרת...");
 
   if (!code) {
     return res.status(400).json({ error: "לא נשלח קוד להרצה" });
   }
 
-  // 📝 1. שמירת קוד הסטודנט לקובץ זמני והרצתו
-  const fileName = `temp_${Date.now()}.py`;
-  fs.writeFileSync(fileName, code);
+  // הגנה: יצירת משתנה בטוח לשימוש
+  const safeInput = custom_input !== undefined ? custom_input : "10";
 
-  exec(`python ${fileName}`, (error, stdout, stderr) => {
+  // 📝 1. הזרקת מנגנון המוקינג ללא רווחים בתחילת השורות
+  const mockedPythonCode = [
+    'import builtins',
+    'def custom_input(prompt=""):',
+    '    print(prompt, end="")',
+    "    return " + JSON.stringify(safeInput),
+    'builtins.input = custom_input',
+    '# --- קוד הסטודנט מתחיל כאן ---',
+    code
+  ].join('\n');
+
+  const fileName = `temp_${Date.now()}.py`;
+  fs.writeFileSync(fileName, mockedPythonCode);
+  console.log("📝 [2/4] קוד הסטודנט נכתב בהצלחה לקובץ הזמני:", fileName);
+
+  const execOptions = {
+    env: { ...process.env, PYTHONIOENCODING: "utf-8" }
+  };
+
+  console.log("🏃‍♂️ [3/4] מתחיל הרצה פיזית של קוד הסטודנט בפייתון...");
+  exec(`python ${fileName}`, execOptions, (error, stdout, stderr) => {
     if (fs.existsSync(fileName)) fs.unlinkSync(fileName);
 
+    console.log("➡️ [3.5] הרצת קוד הסטודנט הסתיימה.");
     const pythonOutput = stdout || stderr || error?.message || "";
 
     // אם יש שגיאת קומפילציה קשיחה בפייתון - נכשיל מיד ללא פנייה ל-AI
     if (stderr || error) {
+      console.log("❌ קוד הסטודנט נכשל עם שגיאת פייתון.");
       return res.json({
         output: pythonOutput,
         isCorrect: false,
@@ -303,38 +326,46 @@ app.post("/api/run-and-check", async (req, res) => {
       });
     }
 
-    // 🤖 2. הפעלת סוכן הפייתון grader_agent.py והזרמת נתונים פנימה
-    const graderProcess = exec("python grader_agent.py", (graderError, graderStdout, graderStderr) => {
+    console.log("🤖 [4/4] קורא לסוכן ה-AI Grader בפייתון (grader_agent.py)...");
+    const graderProcess = exec("python grader_agent.py", execOptions, (graderError, graderStdout, graderStderr) => {
+      console.log("➡️ תשובה חזרה מסוכן ה-AI Grader.");
+
       try {
         if (graderError || graderStderr) throw new Error(graderStderr || graderError.message);
         
-        // קבלת פלט ה-JSON מהסוכן
         const evaluation = JSON.parse(graderStdout.trim());
-
-        console.log(`🤖 AI Grader החליט בפייתון: ${evaluation.isCorrect ? "עבר ✅" : "נכשל ❌"}`);
-        
         res.json({
           output: pythonOutput,
           isCorrect: evaluation.isCorrect,
-          message: evaluation.feedback
+          message: evaluation.feedback,
+          next_level: evaluation.next_level
         });
 
       } catch (err) {
         console.error("❌ שגיאה בפענוח החלטת סוכן ה-AI:", err.message);
         res.json({
           output: pythonOutput,
-          isCorrect: true, // Fallback בטוח לפיתוח
+          isCorrect: true, 
           message: "🎉 הקוד רץ בהצלחה!"
         });
       }
     });
 
-    // כתיבת המידע לתוך ה-stdin של סוכן הפייתון
-    const payload = JSON.stringify({ exercise_description, solution_code, student_code: code, python_output: pythonOutput });
+    // 🔥 תיקון השגיאה: שליחת safeInput בתוך ה-payload במקום המשתנה השבור
+    const payload = JSON.stringify({ 
+      exercise_description, 
+      solution_code, 
+      student_code: code, 
+      python_output: pythonOutput,
+      custom_input: safeInput 
+    });
+    
     graderProcess.stdin.write(payload);
     graderProcess.stdin.end();
   });
 });
+
+
 
 
 

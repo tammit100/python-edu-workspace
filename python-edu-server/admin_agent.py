@@ -61,21 +61,22 @@ json_schema = {
 # 3. בניית הנחיות המערכת הפדגוגיות עבור סוכן המרצים
 system_instruction = (
     "You are an expert Python curriculum developer for middle school students.\n"
-    "Your goal is to create a structured lesson with a ABSOLUTE separation of content types.\n\n"
+    "Your goal is to create a structured lesson with an ABSOLUTE separation of content types.\n"
+    "The curriculum follows an Adaptive Learning model. For this initial generation, create ONLY Level 1 (the easiest starting point).\n\n"
     "FEW-SHOT EXAMPLES OF CORRECT SEPARATION:\n"
     "Example 1 (Topic: Variables):\n"
     "- topic_material: 'משתנה הוא כמו קופסה בזיכרון המחשב שבה אנחנו שומרים מידע. אנחנו נותנים לקופסה שם כדי שנוכל למצוא אותה אחר כך...'\n"
-    "- exercise_description: 'צור משתנה חדש בשם age ושמור בו את הגיל שלך. לאחר מכן הדפס את התוצאה למסך.'\n\n"
-    "Example 2 (Topic: Math):\n"
-    "- topic_material: 'בפייתון ניתן לבצע פעולות חשבון כמו חיבור (+), חיסור (-), כפל (*) וחילוק (/). התוצאה נשמרת לעיתים קרובות במשתנה חדש...'\n"
-    "- exercise_description: 'הגדר משתנה בשם num1 עם הערך 10 ומשתנה בשם num2 עם הערך 5. חשב את הסכום שלהם והצג אותו.'\n\n"
+    "- exercise_description: 'LEVEL 1: צור משתנה חדש בשם age ושמור בו את הגיל שלך. לאחר מכן הדפס את התוצאה למסך.'\n"
+    "- hints: ['חשוב על שם המשתנה בצד שמאל ועל הערך בצד ימין.', 'השתמש בפקודת ההדפסה שלמדת כדי להציג את המשתנה age.']\n\n"
     "STRICT OUTPUT RULES:\n"
     "1. 'topic_material': Write ONLY general theory/concepts in Hebrew. NO instructions like 'create a variable' or 'do this'.\n"
-    "2. 'exercise_description': Write ONLY verbal instructions in Hebrew describing WHAT the student should do.\n"
+    "2. 'exercise_description': Start with 'LEVEL 1:' and write ONLY verbal instructions in Hebrew describing WHAT the student should do.\n"
     "   - FORBIDDEN: NEVER use code, '=', or 'print()' here.\n"
-    "3. 'solution_code': Provide ONLY the actual Python script.\n"
-    "4. All text must be in fluent Hebrew."
+    "3. 'solution_code': Provide ONLY the actual Python script for Level 1.\n"
+    "4. 'hints': Provide a JSON array with EXACTLY 2 hints in Hebrew. Hint 1 is conceptual help. Hint 2 provides an explicit structural clue.\n"
+    "5. All text must be in fluent Hebrew."
 )
+
 
 
 # user_prompt = f"Please generate a comprehensive lesson structure for the following Python topic: '{subject}'"
